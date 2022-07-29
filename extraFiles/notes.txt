@@ -1,0 +1,43 @@
+open pgp
+
+1) encryption
+
+get key 
+
+generate key
+
+
+step 1: full keygen mode
+
+
+
+
+create---
+publicKeyfilepub.asc
+
+privatekeyfile.asc
+
+
+
+
+bouncy castle library : encrypt from public key and private key
+
+
+
+
+using public key encrypt.
+
+
+
+
+class: main method
+
+encrtpyt: get public key gpg algorithm
+
+
+decrpyt
+
+ 
+
+
+
