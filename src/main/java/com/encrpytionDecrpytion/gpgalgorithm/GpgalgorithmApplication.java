@@ -1,10 +1,17 @@
 package com.encrpytionDecrpytion.gpgalgorithm;
 
+import org.apache.commons.io.IOUtils;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags;
+import org.bouncycastle.jcajce.provider.asymmetric.RSA;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPCompressedData;
+import org.bouncycastle.openpgp.PGPCompressedDataGenerator;
+import org.bouncycastle.openpgp.PGPEncryptedData;
 import org.bouncycastle.openpgp.PGPEncryptedDataGenerator;
 import org.bouncycastle.openpgp.PGPEncryptedDataList;
 import org.bouncycastle.openpgp.PGPException;
@@ -26,6 +33,7 @@ import org.bouncycastle.openpgp.jcajce.JcaPGPObjectFactory;
 import org.bouncycastle.openpgp.jcajce.JcaPGPPublicKeyRingCollection;
 import org.bouncycastle.openpgp.jcajce.JcaPGPSecretKeyRingCollection;
 import org.bouncycastle.openpgp.operator.PBESecretKeyDecryptor;
+import org.bouncycastle.openpgp.operator.PGPDataEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder;
@@ -34,7 +42,9 @@ import org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider;
 import org.bouncycastle.openpgp.operator.bc.BcPublicKeyDataDecryptorFactory;
 import org.bouncycastle.openpgp.operator.bc.BcPublicKeyKeyEncryptionMethodGenerator;
 import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter;
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyDecryptorBuilder;
+import org.bouncycastle.openpgp.operator.jcajce.JcePGPDataEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyDataDecryptorFactoryBuilder;
 import org.bouncycastle.util.io.Streams;
 import org.springframework.boot.SpringApplication;
@@ -45,8 +55,18 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.Key;
+import java.security.NoSuchProviderException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
 import java.security.Security;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collection;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.Spliterator;
@@ -54,6 +74,7 @@ import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+import javax.crypto.Cipher;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -120,9 +141,29 @@ public class GpgalgorithmApplication {
 
   static InputStream pvtKeyInputStream = new ByteArrayInputStream(pvtKey.getBytes());
 
+  //----------------------------------The testing phase----------------------------------
+
+  public static void writeFileToLiteralData(OutputStream out,
+    char fileType, File file, byte[] buffer) throws IOException {
+    PGPLiteralDataGenerator lData = new PGPLiteralDataGenerator();
+    OutputStream pOut = lData.open(out, fileType, file.getName(),
+      new Date(file.lastModified()), buffer);
+    FileInputStream in = new FileInputStream(file);
+    byte[] buf = new byte[buffer.length];
+    int len;
+
+    while ((len = in.read(buf)) > 0) {
+      pOut.write(buf, 0, len);
+    }
+
+    lData.close();
+    in.close();
+  }
+
+  //--------------------------------End of the testing methods---------------------------------
 
   //---------------------------------method to get public key---------------------------------
-  public static PGPPublicKey getPublicKey(String publicKeyringFile) throws IOException, PGPException {
+  public static PublicKey getPublicKey(String publicKeyringFile) throws IOException, PGPException {
     PGPPublicKey pgpPublicKey = null;
     // Read in from the public keyring file
     try (FileInputStream keyInputStream = new FileInputStream(publicKeyringFile)) {
@@ -149,11 +190,14 @@ public class GpgalgorithmApplication {
       }
     }
     // If this point is reached, no public key could be extracted
-    return pgpPublicKey;
+//    PGPPrivateKey pgpPrivateKey=pgpPrivateKeyStream.findAny().orElseThrow();
+    JcaPGPKeyConverter jcaPGPKeyConverter=new JcaPGPKeyConverter();
+    PublicKey pub = jcaPGPKeyConverter.getPublicKey(pgpPublicKey);
+    return pub;
   }
 
   //---------------------------------method to get private key---------------------------------
-  private static PGPPrivateKey getPrivateKey(String privateKey) throws PGPException, IOException {
+  private static PrivateKey getPrivateKey(String privateKey) throws PGPException, IOException {
     InputStream privateKeyInputStream = PGPUtil.getDecoderStream(new ByteArrayInputStream(privateKey.getBytes(
       StandardCharsets.UTF_8)));
     PGPSecretKeyRingCollection pgpSecretKeyRingCollection =
@@ -175,11 +219,13 @@ public class GpgalgorithmApplication {
           return null;
         }
       });
-    return pgpPrivateKeyStream.findAny().orElseThrow();
+
+
+    PGPPrivateKey pgpPrivateKey=pgpPrivateKeyStream.findAny().orElseThrow();
+    JcaPGPKeyConverter jcaPGPKeyConverter=new JcaPGPKeyConverter();
+    PrivateKey pri = jcaPGPKeyConverter.getPrivateKey(pgpPrivateKey);
+    return pri;
   }
-
-
-
 
   private static PGPPrivateKey findSecretKey(PGPSecretKeyRingCollection pgpSec, long keyID, String passPhrase)
     throws PGPException {
@@ -191,8 +237,6 @@ public class GpgalgorithmApplication {
     return pgpSecKey.extractPrivateKey(new JcePBESecretKeyDecryptorBuilder()
       .setProvider(BouncyCastleProvider.PROVIDER_NAME).build(passPhrase.toCharArray()));
   }
-
-
 
   public static PGPSecretKey getSecretKey(String privateKeyringFile) throws IOException, PGPException {
     PGPSecretKey pgpPrivateKey = null;
@@ -223,12 +267,6 @@ public class GpgalgorithmApplication {
     // If this point is reached, no public key could be extracted
     return pgpPrivateKey;
   }
-
-
-
-
-
-
 
   //---------------------------------method to encrypt our plain text---------------------------------
   public static String getEncryptedMessage(String strData, PGPPublicKey publicKey) {
@@ -264,9 +302,8 @@ public class GpgalgorithmApplication {
     return null;
   }
 
-  private static byte[] getPlainTextFromEncrpytedMessage(String encryptedMessage, String passphrase) throws Exception {
-    byte[] pgpEncryptedData = encryptedMessage.getBytes();
-    PGPPrivateKey privateKey = getPrivateKey(pvtKey);
+  private static byte[] getPlainTextFromEncrpytedMessage(byte[] pgpEncryptedData, String passphrase) throws Exception {
+    PrivateKey privateKey = getPrivateKey(pvtKey);
     PGPObjectFactory pgpFact = new JcaPGPObjectFactory(pgpEncryptedData);
     PGPEncryptedDataList encList = (PGPEncryptedDataList) pgpFact.nextObject();
 // note: we can only do this because we know we match the first encrypted data object
@@ -285,6 +322,112 @@ public class GpgalgorithmApplication {
 
     return null;
   }
+
+  private static String encode(byte[] data) {
+    return Base64.getEncoder().encodeToString(data);
+  }
+
+//  private static String encrypt(String message) throws Exception{
+//    byte[] messageToBytes = message.getBytes();
+//    Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+//    cipher.init(Cipher.ENCRYPT_MODE, (Key) getPublicKey("C:\\Users\\jay\\Desktop\\gpgalgorithm\\publickey.asc"));
+//    byte[] encryptedBytes = cipher.doFinal(messageToBytes);
+//    System.out.println("Encrypted bytes:"+encode(encryptedBytes));
+//    return encode(encryptedBytes);
+//  }
+
+
+
+/*
+package com.presedential.title;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPException;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import javax.crypto.Cipher;
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.NoSuchProviderException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Security;
+import java.util.Base64;
+public class RSA {
+  private PrivateKey privateKey;
+  private PublicKey publicKey;
+  public RSA() {
+    try {
+      KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+      generator.initialize(1024);
+      KeyPair pair = generator.generateKeyPair();
+      privateKey = pair.getPrivate();
+      publicKey = pair.getPublic();
+    } catch (Exception ignored) {
+    }
+  }
+  public String encrypt(String message) throws Exception{
+    byte[] messageToBytes = message.getBytes();
+    Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+    cipher.init(Cipher.ENCRYPT_MODE,publicKey);
+    byte[] encryptedBytes = cipher.doFinal(messageToBytes);
+    return encode(encryptedBytes);
+  }
+  private String encode(byte[] data){
+    return Base64.getEncoder().encodeToString(data);
+  }
+  public String decrypt(String encryptedMessage) throws Exception{
+    byte[] encryptedBytes = decode(encryptedMessage);
+    Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+    cipher.init(Cipher.DECRYPT_MODE,privateKey);
+    byte[] decryptedMessage = cipher.doFinal(encryptedBytes);
+    return new String(decryptedMessage,"UTF8");
+  }
+  private byte[] decode(String data){
+    return Base64.getDecoder().decode(data);
+  }
+  public static void main(String[] args) throws Exception {
+    RSA rsa = new RSA();
+    encrypt();
+    decrypt();
+   */
+/* try{
+      String encryptedMessage = rsa.encrypt("This is Linuxhint.com");
+      String decryptedMessage = rsa.decrypt(encryptedMessage);
+      System.err.println("Encrypted:\n"+encryptedMessage);
+      System.err.println("Decrypted:\n"+decryptedMessage);
+    }catch (Exception ignored){}
+  }*//*
+  }
+  public static void encrypt() throws Exception {
+    Security.addProvider(new BouncyCastleProvider());
+    //Load Public Key File
+    FileInputStream key = new FileInputStream("C:\\Presidential\\0x6243E647-pub.asc");
+    //PGPPublicKey pubKey2 = KeyBasedFileProcessorUtil.readPublicKey(key3);
+    PGPPublicKey pubKey = KeyBasedFileProcessorUtil.readPublicKey(key);
+    //Output file
+    FileOutputStream out = new FileOutputStream("C:\\Presidential\\enc.bpg");
+    //Input file
+    String inputFilename = "C:\\Presidential\\a.txt";
+    //Other settings
+    boolean armor = false;
+    boolean integrityCheck = false;
+    KeyBasedFileProcessorUtil.encryptFile(out, inputFilename,
+      pubKey, armor, integrityCheck);
+  }
+  public static void decrypt() throws  Exception
+  {
+    char a[]={'d','i','g','v','i','j','a','y'};
+    String inputFilename2="C:\\Presidential\\enc.bpg";
+    FileInputStream key3 = new FileInputStream("C:\\Presidential\\0x6243E647-sec.asc");
+    FileInputStream key2 = new FileInputStream(inputFilename2);
+    BufferedInputStream b=new BufferedInputStream(new FileInputStream(inputFilename2));
+    KeyBasedFileProcessorUtil.decryptFile(b,key3,a,"aa.txt","C:\\Presidential\\");
+  }
+}*/
 
   //---------------------------------method to decrypt our plain text---------------------------------
   public static String extractRsaEncryptedObject(PGPPrivateKey privateKey, String endData)
@@ -322,23 +465,35 @@ public class GpgalgorithmApplication {
     throw new IllegalStateException("modification check failed");
   }
 
-
-
-
+  //decrypt using private key and
   public static InputStream decryptStream(InputStream in, char[] passwd)
     throws Exception {
     in = PGPUtil.getDecoderStream(in);
+    if (in != null) {
+      System.out.println("in" + in);
+    }
     // general class for reading a stream of data.
     PGPObjectFactory inPgpReader = new PGPObjectFactory(in, new BcKeyFingerprintCalculator());
+    if (inPgpReader != null) {
+      System.out.println("inpgpreadr:" + inPgpReader);
+    }
     Object o = inPgpReader.nextObject();
     PGPEncryptedDataList encryptedDataList;
+    System.out.println("habibi" + inPgpReader.nextObject() + "again" + o);
     // the first object might be a PGP marker packet.
-    if (o instanceof PGPEncryptedDataList) encryptedDataList = (PGPEncryptedDataList) o;
-    else
-      // first object was a marker, the real data is the next one.
+//    encryptedDataList = (PGPEncryptedDataList) inPgpReader;
+    if (o instanceof PGPEncryptedDataList) {
+      encryptedDataList = (PGPEncryptedDataList) o;
+    } else
+    // first object was a marker, the real data is the next one.
+    {
       encryptedDataList = (PGPEncryptedDataList) inPgpReader.nextObject();
+    }
     // get the iterator so we can iterate through all the encrypted data.
     Iterator encryptedDataIterator = encryptedDataList.getEncryptedDataObjects();
+    while (encryptedDataIterator.hasNext()) {
+      System.out.println("Printing encrpted data generator:" + encryptedDataIterator.next());
+    }//printing encrpted data generator data
     // to be use for decryption
     PGPPrivateKey privateKey = null;
     // a handle to the encrypted data stream
@@ -360,10 +515,11 @@ public class GpgalgorithmApplication {
           ex);
       }
     }
-    if (privateKey == null)
+    if (privateKey == null) {
       throw new IllegalStateException(
         "decryption exception:  object: "
           + ", Private key for message not found.");
+    }
     // finally, lets decrypt the object
     InputStream decryptInputStream = encryptedDataStreamHandle.getDataStream(new BcPublicKeyDataDecryptorFactory(privateKey));
     PGPObjectFactory decryptedDataReader = new PGPObjectFactory(decryptInputStream, new BcKeyFingerprintCalculator());
@@ -382,22 +538,118 @@ public class GpgalgorithmApplication {
           + ", data is not a simple encrypted file - type unknown.");
     }
   }
-  public static byte[] getEncrypted(InputStream is, PGPPublicKey pubKey) throws IOException {
+
+  public static OutputStream getEncryptedReturnOutputStream(InputStream is, PGPPublicKey pubKey) throws IOException {
     ByteArrayOutputStream bos = new ByteArrayOutputStream();
-    bos.write(is.readAllBytes());
+    bos.write(is.readAllBytes());//written to the baos object fetching the data from the input stream.
     // creates a cipher stream which will have an integrity packet associated with it
     PGPEncryptedDataGenerator encryptedDataGenerator =
       new PGPEncryptedDataGenerator(new BcPGPDataEncryptorBuilder(PGPEncryptedDataGenerator.CAST5));
     OutputStream out;
+    byte[] byteArr;
     try {
       // Add a key encryption method to be used to encrypt the session data associated
       // with this encrypted data
       encryptedDataGenerator.addMethod(new BcPublicKeyKeyEncryptionMethodGenerator(pubKey));
       // wrapper around the buffer which will contain the encrypted data.
       out = encryptedDataGenerator.open(bos, new byte[1 << 15]);
-      ByteArrayOutputStream baos = new ByteArrayOutputStream(outstream);
-      byte[] bytes = baos.toByteArray();
-      System.out.println("bytes:" + bytes);
+//below line jays code
+      byteArr = out.toString().getBytes();
+
+
+
+      /*
+
+
+PGPencrypteddatagenerator  returns:  new WrappedGeneratorStream(genOut, this);
+
+
+         private OutputStream open(
+        OutputStream    out,
+        long            length,
+        byte[]          buffer)
+
+
+        here we have taken length as 0
+
+        passed
+
+        */
+
+      //convert from outputstream to bytearray (bytestream)
+
+    } catch (Exception e) {
+      throw new RuntimeException(
+        "Exception when wrapping PGP around our output stream", e);
+    }
+    /*
+     * Open a literal data packet, returning a stream to store the data inside the packet as an indefinite stream.
+     * A "literal data packet" in PGP world is the body of a message; data that is not to be further interpreted.
+     *
+     * The stream is written out as a series of partial packets with a chunk size determine by the size of the passed in buffer.
+     * @param outputstream - the stream we want the packet in
+     * @param format - the format we are using.
+     * @param filename
+     * @param the time of last modification we want stored.
+     * @param the buffer to use for collecting data to put into chunks.
+     */
+    try {
+      PGPLiteralDataGenerator literalDataGenerator = new PGPLiteralDataGenerator();
+      out =
+        literalDataGenerator.open(
+          bos,
+          PGPLiteralData.BINARY,
+          PGPLiteralDataGenerator.CONSOLE,
+          new Date(),
+          new byte[1 << 15]);
+
+      //below line jays code
+    } catch (Exception e) {
+      throw new RuntimeException(
+        "Exception when creating the PGP encrypted wrapper around the output stream.",
+        e);
+    }
+    return out;
+  }
+
+//
+//  public static void encrypt() throws Exception {
+//    Security.addProvider(new BouncyCastleProvider());
+//    //Load Public Key File
+//    FileInputStream key = new FileInputStream("C:\\Presidential\\0x6243E647-pub.asc");
+//    //PGPPublicKey pubKey2 = KeyBasedFileProcessorUtil.readPublicKey(key3);
+//    PGPPublicKey pubKey = KeyBasedFileProcessorUtil.readPublicKey(key);
+//    //Output file
+//    FileOutputStream out = new FileOutputStream("C:\\Presidential\\enc.bpg");
+//    //Input file
+//    String inputFilename = "C:\\Presidential\\a.txt";
+//    //Other settings
+//    boolean armor = false;
+//    boolean integrityCheck = false;
+//    KeyBasedFileProcessorUtil.encryptFile(out, inputFilename,
+//      pubKey, armor, integrityCheck);
+//  }
+
+
+
+
+  public static byte[] getEncrypted(String str, PGPPublicKey pubKey) throws IOException {
+    InputStream is = IOUtils.toInputStream(str);
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    bos.write(is.readAllBytes());//written to the baos object fetching the data from the input stream.
+    // creates a cipher stream which will have an integrity packet associated with it
+    PGPEncryptedDataGenerator encryptedDataGenerator =
+      new PGPEncryptedDataGenerator(new BcPGPDataEncryptorBuilder(PGPEncryptedDataGenerator.CAST5));
+    OutputStream out;
+    byte[] byteArr;
+    try {
+      // Add a key encryption method to be used to encrypt the session data associated
+      // with this encrypted data
+      encryptedDataGenerator.addMethod(new BcPublicKeyKeyEncryptionMethodGenerator(pubKey));
+      // wrapper around the buffer which will contain the encrypted data.
+      out = encryptedDataGenerator.open(bos, new byte[1 << 15]);
+
+      byteArr = out.toString().getBytes();  // might /might not work
 
     } catch (Exception e) {
       throw new RuntimeException(
@@ -429,8 +681,13 @@ public class GpgalgorithmApplication {
         "Exception when creating the PGP encrypted wrapper around the output stream.",
         e);
     }
-    return null;
+    ByteArrayOutputStream out1 = new ByteArrayOutputStream();
+    out1.writeTo(out);
+
+    return out1.toByteArray();
+    //WrappedGeneratorStream
   }
+
   /*
    * Extract the PGP private key from the encrypted content.  Since the PGP key file contains N number of keys, this method will fetch the
    * private key by "keyID".
@@ -452,18 +709,89 @@ public class GpgalgorithmApplication {
   }
 
 
+//  public static void encrypt() throws Exception {
+//    Security.addProvider(new BouncyCastleProvider());
+//    //Load Public Key File
+//    FileInputStream key = new FileInputStream("C:\\Presidential\\0x6243E647-pub.asc");
+//    //PGPPublicKey pubKey2 = KeyBasedFileProcessorUtil.readPublicKey(key3);
+//    PGPPublicKey pubKey = KeyBasedFileProcessorUtil.readPublicKey(key);
+//    //Output file
+//    FileOutputStream out = new FileOutputStream("C:\\Presidential\\enc.bpg");
+//    //Input file
+//    String inputFilename = "C:\\Presidential\\a.txt";
+//    //Other settings
+//    boolean armor = false;
+//    boolean integrityCheck = false;
+//    KeyBasedFileProcessorUtil.encryptFile(out, inputFilename,
+//      pubKey, armor, integrityCheck);
+//  }
 
+
+
+
+  public static byte[] decryptPGP(byte[] message, PrivateKey key) throws GeneralSecurityException, PGPException, IOException {
+    ByteBuffer buffer = ByteBuffer.wrap(message);
+    int keyLength = buffer.getInt();
+    byte[] encyptedPublicKey = new byte[keyLength];
+    buffer.get(encyptedPublicKey);
+
+    Cipher cipher = Cipher.getInstance("RSA");
+    cipher.init(Cipher.DECRYPT_MODE, key);
+
+    byte[] encodedPublicKey = cipher.doFinal(encyptedPublicKey);
+    String s = new String(encodedPublicKey);
+    PublicKey publicKey = (PublicKey) getPublicKey(s);
+    cipher.init(Cipher.DECRYPT_MODE, publicKey);
+
+    byte[] encryptedMessage = new byte[buffer.remaining()];
+    buffer.get(encryptedMessage);
+
+    return cipher.doFinal(encryptedMessage);
+  }
+
+
+  public static String encryptMessagePgp(String plainText, PublicKey publicKey) throws Exception {
+    Cipher cipher = Cipher.getInstance("RSA");
+    cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+    return Base64.getEncoder().encodeToString(cipher.doFinal(plainText.getBytes()));
+  }
+  public static String decryptMessagePgp(String encryptedText, PrivateKey privateKey) throws Exception {
+    Cipher cipher = Cipher.getInstance("RSA");
+    cipher.init(Cipher.DECRYPT_MODE, privateKey);
+    return new String(cipher.doFinal(Base64.getDecoder().decode(encryptedText)));
+  }
 
   // ---------------------------------main method---------------------------------
   public static void main(String[] args) throws Exception {
+    Security.addProvider(new BouncyCastleProvider());
     String stringToEncryptAndDecrypt = "this is the string to be encrypted and decrypted";
+    byte[] original = stringToEncryptAndDecrypt.getBytes();
     String passphrase = "jayrathod";
+    System.out.println(encryptMessagePgp("plain text", getPublicKey("C:\\Users\\jay\\Desktop\\gpgalgorithm\\publickey.asc")));
 
-    PGPPublicKey pgpPublicKey = getPublicKey("C:\\Users\\jay\\Desktop\\gpgalgorithm\\publickey.asc");
     System.out.println("pvtkey: " + getPrivateKey(pvtKey));
-    byte [] encrypt = getEncrypted(new ByteArrayInputStream("JAY".getBytes()),pgpPublicKey);
-    decryptStream( new ByteArrayInputStream(encrypt), "jayrathod".toCharArray());
+    System.out.println( decryptMessagePgp(encryptMessagePgp("plain text", getPublicKey("C:\\Users\\jay\\Desktop\\gpgalgorithm\\publickey.asc")),getPrivateKey(pvtKey) ));
+//    PGPPublicKey pgpPublicKey = getPublicKey("C:\\Users\\jay\\Desktop\\gpgalgorithm\\publickey.asc");
+//    System.out.println("pubkey:" + pgpPublicKey);
+//    System.out.println("Jay string encrypted" + getEncrypted("Jay", pgpPublicKey));
+    //    InputStream targetStream = new ByteArrayInputStream(   getEncrypted("Jay", pgpPublicKey));
 
+//    System.out.println("-------------------this is the byte array---------------" + Arrays.toString());
+//    System.out.println(decryptStream(targetStream, "jayrathod".toCharArray()));
+//    String str=new String(=);
+
+//    System.out.println(getPlainTextFromEncrpytedMessage(getEncrypted("Jay", pgpPublicKey),"jayrathod"));
+//    System.out.println(extractRsaEncryptedObject(getPrivateKey(pvtKey), new String( getEncrypted("Jay", pgpPublicKey))));
+
+// System.out.println(getPlainTextFromEncrpytedMessage(getEncrypted(new ByteArrayInputStream("JAY".getBytes()), pgpPublicKey), "jayrathod"));
+//    System.out.println(     Base64.getEncoder().encodeToString( decryptPGP(getEncrypted("Jay", pgpPublicKey), getPrivateKey(pvtKey))));
+
+//    System.out.println(   "decrpypted message:" +  decryptMessagePgp( new String(getEncrypted("Jay", pgpPublicKey)), getPrivateKey(pvtKey)));
+
+//    Base64.getEncoder().encodeToString( decryptPGP(getEncrypted("Jay", pgpPublicKey), getPrivateKey(pvtKey)))
+    //THE TESTING PHASE
+
+    //END OF THE TESTING PHASE
 
 //    System.out.println(pgpPublicKey);
 //    System.out.println(getEncryptedMessage(stringToEncryptAndDecrypt, pgpPublicKey));
